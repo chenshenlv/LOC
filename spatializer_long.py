@@ -26,13 +26,14 @@ azimuths = [-80, -65, -55, -45, -40, -35, -30, -25, -20,
 elevations = [-45+5.625*e for e in range(50)]
 HRTF_data = loadmat('./CIPIC_58_HRTF.mat')
 filename = 'i_ran_so_far_away-flock_of_seagulls.wav'   
-block_size = 10240 #frames size Sampling frequency in Hertz (= frames per second).
+block_size = 12288 #frames size Sampling frequency in Hertz (= frames per second).
 buffer_size = 2 #number of blocks used for buffering    
 q = queue.Queue(maxsize=buffer_size)
 event = threading.Event()
 
-def spatialization(azimuths,HRTF_data):
-    aIndex=random.randint(0,np.size(azimuths)-1)
+def spatialization(azimuths,HRTF_data,routine):
+#    for i in range(1,np.size(azimuths)): 
+    aIndex=routine
 #    aIndex=2
     eIndex=8;
     left = np.squeeze(HRTF_data['hrir_l'][aIndex, eIndex, :])  # 200*1
@@ -51,7 +52,7 @@ def spatialization(azimuths,HRTF_data):
     data_right = np.convolve(right, data,mode='same')
     buffer = np.vstack((data_left,data_right))
     buffer = np.transpose(buffer)
-    print('buffer size',len(buffer))
+#        print('buffer size',len(buffer))
     return buffer
     
 def callback(outdata, frames, time, status):
@@ -86,15 +87,15 @@ try:
     with sf.SoundFile(filename) as f:
 #        sd.query_devices(device=9, kind=None)
 #        sd.default
-        
+        routine=0
         for _ in range(buffer_size):
             data = f.read(frames=block_size, dtype='float32',fill_value=0.0)
             data=data.flatten()
             if len(data)==0:
                 break
             
-            buffer=spatialization(azimuths,HRTF_data)
-            
+            buffer=spatialization(azimuths,HRTF_data,routine)
+            routine=routine+1
             q.put_nowait(buffer)  # Pre-fill queue
 
         stream = sd.OutputStream(
@@ -102,10 +103,13 @@ try:
             device=16, channels=2, dtype='float32',
             callback=callback, finished_callback=event.set)
         with stream:
-            timeout = block_size * buffer_size / f.samplerate
+            timeout = (block_size * buffer_size-2) / f.samplerate
             while len(data)>0:
                 data = f.read(frames=block_size, dtype='float32',fill_value=0.0)
-                buffer=spatialization(azimuths,HRTF_data)
+                routine=routine+1
+                buffer=spatialization(azimuths,HRTF_data,routine)
+                if routine==24:
+                    routine=0
                 q.put(buffer, timeout=timeout)
             event.wait()  # Wait until playback is finished
 except queue.Full:
